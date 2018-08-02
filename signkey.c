@@ -555,6 +555,9 @@ int buf_verify(buffer * buf, sign_key *key, const buffer *data_buf) {
 		}
 	}
 #endif
+#if 1
+	exit(1);
+#endif
 
 	dropbear_exit("Non-matching signing type");
 	return DROPBEAR_FAILURE;

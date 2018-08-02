@@ -130,48 +130,47 @@ static int match_option(buffer *options_buf, const char *opt_name) {
 	return DROPBEAR_FAILURE;
 }
 
-/* Parse pubkey options and set ses.authstate.pubkey_options accordingly.
- * Returns DROPBEAR_SUCCESS if key is ok for auth, DROPBEAR_FAILURE otherwise */
-int svr_add_pubkey_options(buffer *options_buf, int line_num, const char* filename) {
-	int ret = DROPBEAR_FAILURE;
-
-	TRACE(("enter addpubkeyoptions"))
-
-	ses.authstate.pubkey_options = (struct PubKeyOptions*)m_malloc(sizeof( struct PubKeyOptions ));
-
+int populate_pubkey_options(buffer *options_buf, struct PubKeyOptions *pubkey_options) {
 	buf_setpos(options_buf, 0);
 	while (options_buf->pos < options_buf->len) {
 		if (match_option(options_buf, "no-port-forwarding") == DROPBEAR_SUCCESS) {
 			dropbear_log(LOG_WARNING, "Port forwarding disabled.");
-			ses.authstate.pubkey_options->no_port_forwarding_flag = 1;
+			pubkey_options->no_port_forwarding_flag = 1;
 			goto next_option;
 		}
 #if DROPBEAR_SVR_AGENTFWD
 		if (match_option(options_buf, "no-agent-forwarding") == DROPBEAR_SUCCESS) {
 			dropbear_log(LOG_WARNING, "Agent forwarding disabled.");
-			ses.authstate.pubkey_options->no_agent_forwarding_flag = 1;
+			pubkey_options->no_agent_forwarding_flag = 1;
 			goto next_option;
 		}
 #endif
 #if DROPBEAR_X11FWD
 		if (match_option(options_buf, "no-X11-forwarding") == DROPBEAR_SUCCESS) {
 			dropbear_log(LOG_WARNING, "X11 forwarding disabled.");
-			ses.authstate.pubkey_options->no_x11_forwarding_flag = 1;
+			pubkey_options->no_x11_forwarding_flag = 1;
 			goto next_option;
 		}
 #endif
 		if (match_option(options_buf, "no-pty") == DROPBEAR_SUCCESS) {
 			dropbear_log(LOG_WARNING, "Pty allocation disabled.");
-			ses.authstate.pubkey_options->no_pty_flag = 1;
+			pubkey_options->no_pty_flag = 1;
 			goto next_option;
 		}
+
+#if 1
+		if (match_option(options_buf, "cert-authority") == DROPBEAR_SUCCESS) {
+			pubkey_options->cert_authority = 1;
+			goto next_option;
+		}
+#endif
 		if (match_option(options_buf, "command=\"") == DROPBEAR_SUCCESS) {
 			int escaped = 0;
 			const unsigned char* command_start = buf_getptr(options_buf, 0);
 
 			if (ses.authstate.pubkey_options->forced_command) {
 				/* multiple command= options */
-				goto bad_option;
+				return DROPBEAR_FAILURE;
 			}
 
 			while (options_buf->pos < options_buf->len) {
@@ -189,7 +188,7 @@ int svr_add_pubkey_options(buffer *options_buf, int line_num, const char* filena
 				escaped = (!escaped && c == '\\');
 			}
 			dropbear_log(LOG_WARNING, "Badly formatted command= authorized_keys option");
-			goto bad_option;
+			return DROPBEAR_FAILURE;
 		}
 
 next_option:
@@ -199,9 +198,26 @@ next_option:
 		 */
 		if (options_buf->pos < options_buf->len 
 				&& buf_getbyte(options_buf) != ',') {
-			goto bad_option;
+			return DROPBEAR_FAILURE;
 		}
 		/* Process the next option. */
+	}
+
+	return DROPBEAR_SUCCESS;
+}
+
+/* Parse pubkey options and set ses.authstate.pubkey_options accordingly.
+ * Returns DROPBEAR_SUCCESS if key is ok for auth, DROPBEAR_FAILURE otherwise */
+int svr_add_pubkey_options(buffer *options_buf, int line_num, const char* filename) {
+	int ret = DROPBEAR_FAILURE;
+
+	TRACE(("enter addpubkeyoptions"))
+
+	ses.authstate.pubkey_options = (struct PubKeyOptions*)m_malloc(sizeof( struct PubKeyOptions ));
+
+	if (populate_pubkey_options(options_buf, &ses.authstate.pubkey_options) != DROPBEAR_SUCCESS) {
+		dropbear_log(LOG_WARNING, "Bad public key options at %s:%d", filename, line_num);
+		goto bad_option;
 	}
 	/* parsed all options with no problem */
 	ret = DROPBEAR_SUCCESS;
@@ -210,7 +226,6 @@ next_option:
 bad_option:
 	ret = DROPBEAR_FAILURE;
 	svr_pubkey_options_cleanup();
-	dropbear_log(LOG_WARNING, "Bad public key options at %s:%d", filename, line_num);
 
 end:
 	TRACE(("leave addpubkeyoptions"))

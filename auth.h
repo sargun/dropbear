@@ -42,14 +42,27 @@ void svr_auth_pubkey(void);
 void svr_auth_pam(void);
 
 #if DROPBEAR_SVR_PUBKEY_OPTIONS_BUILT
+struct PubKeyOptions {
+	/* Flags */
+	int no_port_forwarding_flag;
+	int no_agent_forwarding_flag;
+	int no_x11_forwarding_flag;
+	int no_pty_flag;
+	int cert_authority;
+
+	/* "command=" option. */
+	char * forced_command;
+};
 int svr_pubkey_allows_agentfwd(void);
 int svr_pubkey_allows_tcpfwd(void);
 int svr_pubkey_allows_x11fwd(void);
 int svr_pubkey_allows_pty(void);
 void svr_pubkey_set_forced_command(struct ChanSess *chansess);
 void svr_pubkey_options_cleanup(void);
+int populate_pubkey_options(buffer *options_buf, struct PubKeyOptions *pubkey_options);
 int svr_add_pubkey_options(buffer *options_buf, int line_num, const char* filename);
 #else
+struct PubKeyOptions;
 /* no option : success */
 #define svr_pubkey_allows_agentfwd() 1
 #define svr_pubkey_allows_tcpfwd() 1
@@ -58,6 +71,7 @@ int svr_add_pubkey_options(buffer *options_buf, int line_num, const char* filena
 static inline void svr_pubkey_set_forced_command(struct ChanSess *chansess) { }
 static inline void svr_pubkey_options_cleanup(void) { }
 #define svr_add_pubkey_options(x,y,z) DROPBEAR_SUCCESS
+#define populate_pubkey_options(x, y) DROPBEAR_FAILURE
 #endif
 
 /* Client functions */
@@ -125,18 +139,5 @@ struct AuthState {
 	struct PubKeyOptions* pubkey_options;
 #endif
 };
-
-#if DROPBEAR_SVR_PUBKEY_OPTIONS_BUILT
-struct PubKeyOptions;
-struct PubKeyOptions {
-	/* Flags */
-	int no_port_forwarding_flag;
-	int no_agent_forwarding_flag;
-	int no_x11_forwarding_flag;
-	int no_pty_flag;
-	/* "command=" option. */
-	char * forced_command;
-};
-#endif
 
 #endif /* DROPBEAR_AUTH_H_ */

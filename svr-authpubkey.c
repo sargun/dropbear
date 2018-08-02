@@ -192,11 +192,54 @@ static void send_msg_userauth_pk_ok(const char* algo, unsigned int algolen,
 
 }
 
+static int checkpubkey_algo(buffer* line, const char* algo,
+		unsigned int algolen, const unsigned char* keyblob,
+		unsigned int keybloblen) {
+
+	unsigned int pos, len;
+	buf_incrpos(line, algolen);
+
+	/* check for space (' ') character */
+	if (buf_getbyte(line) != ' ') {
+		TRACE(("checkpubkey_line: space character expected, isn't there"))
+		return DROPBEAR_FAILURE;
+	}
+
+	/* truncate the line at the space after the base64 data */
+	pos = line->pos;
+	for (len = 0; line->pos < line->len; len++) {
+		if (buf_getbyte(line) == ' ') break;
+	}
+	buf_setpos(line, pos);
+	buf_setlen(line, line->pos + len);
+
+	TRACE(("checkpubkey_line: line pos = %d len = %d", line->pos, line->len))
+
+	return cmp_base64_key(keyblob, keybloblen, (const unsigned char *) algo, algolen, line, NULL);
+}
+
+static int checkpubkey_maybecert(buffer* line, buffer* options_buf,
+		const unsigned char* keyblob, unsigned int keybloblen) {
+	struct PubKeyOptions publickey_options = {};
+
+		TRACE(("CHECKING CERT"));
+	if (populate_pubkey_options(options_buf, &publickey_options) != DROPBEAR_SUCCESS) {
+		buf_setpos(options_buf, 0);
+		TRACE(("Could not process options_buf: %s", buf_getptr(options_buf, 1)));
+		return DROPBEAR_FAILURE;
+	}
+
+	if (publickey_options.cert_authority) {
+		TRACE(("FOUND A CERT AUTHORTITY"));
+	}
+
+	return DROPBEAR_SUCCESS;
+}
+
 static int checkpubkey_line(buffer* line, int line_num, const char* filename,
 		const char* algo, unsigned int algolen,
 		const unsigned char* keyblob, unsigned int keybloblen) {
-	buffer *options_buf = NULL;
-	unsigned int pos, len;
+
 	int ret = DROPBEAR_FAILURE;
 
 	if (line->len < MIN_AUTHKEYS_LINE || line->len > MAX_AUTHKEYS_LINE) {
@@ -213,12 +256,16 @@ static int checkpubkey_line(buffer* line, int line_num, const char* filename,
 	if (line->pos + algolen+3 > line->len) {
 		goto out;
 	}
-	/* check the key type */
-	if (strncmp((const char *) buf_getptr(line, algolen), algo, algolen) != 0) {
+	/* check the key type, if it doesn't match, maybe this key is prefixed with options? */
+	if (strncmp((const char *) buf_getptr(line, algolen), algo, algolen) == 0) {
+		ret = checkpubkey_algo(line, algo, algolen, keyblob, keybloblen);
+	} else {
+		buffer *options_buf = NULL;
 		int is_comment = 0;
 		unsigned char *options_start = NULL;
 		int options_len = 0;
 		int escape, quoted;
+		const char *line_algo;
 		
 		/* skip over any comments or leading whitespace */
 		while (line->pos < line->len) {
@@ -255,47 +302,34 @@ static int checkpubkey_line(buffer* line, int line_num, const char* filename,
 			}
 			options_len++;
 		}
-		options_buf = buf_new(options_len);
-		buf_putbytes(options_buf, options_start, options_len);
 
 		/* compare the algorithm. +3 so we have enough bytes to read a space and some base64 characters too. */
 		if (line->pos + algolen+3 > line->len) {
 			goto out;
 		}
-		if (strncmp((const char *) buf_getptr(line, algolen), algo, algolen) != 0) {
-			goto out;
+
+		options_buf = buf_new(options_len);
+		buf_putbytes(options_buf, options_start, options_len);
+
+		line_algo = (const char *) buf_getptr(line, algolen);
+		if (strncmp(line_algo, algo, algolen) == 0) {
+			ret = checkpubkey_algo(line, algo, algolen, keyblob, keybloblen);
+		} else if (strncmp("ssh-rsa-cert-v01@openssh.com", algo, algolen) == 0) {
+			ret = checkpubkey_maybecert(line, options_buf, keyblob, keybloblen);
+		} else if (strncmp("ssh-dss-cert-v01@openssh.com", algo, algolen) == 0) {
+			ret = checkpubkey_maybecert(line, options_buf, keyblob, keybloblen);
 		}
-	}
-	buf_incrpos(line, algolen);
-	
-	/* check for space (' ') character */
-	if (buf_getbyte(line) != ' ') {
-		TRACE(("checkpubkey_line: space character expected, isn't there"))
-		goto out;
-	}
 
-	/* truncate the line at the space after the base64 data */
-	pos = line->pos;
-	for (len = 0; line->pos < line->len; len++) {
-		if (buf_getbyte(line) == ' ') break;
-	}	
-	buf_setpos(line, pos);
-	buf_setlen(line, line->pos + len);
-
-	TRACE(("checkpubkey_line: line pos = %d len = %d", line->pos, line->len))
-
-	ret = cmp_base64_key(keyblob, keybloblen, (const unsigned char *) algo, algolen, line, NULL);
-
-	if (ret == DROPBEAR_SUCCESS && options_buf) {
-		ret = svr_add_pubkey_options(options_buf, line_num, filename);
+		if (ret == DROPBEAR_SUCCESS) {
+			ret = svr_add_pubkey_options(options_buf, line_num, filename);
+		}
+		buf_free(options_buf);
 	}
 
 out:
-	if (options_buf) {
-		buf_free(options_buf);
-	}
 	return ret;
 }
+
 
 
 /* Checks whether a specified publickey (and associated algorithm) is an
@@ -318,8 +352,8 @@ static int checkpubkey(const char* algo, unsigned int algolen,
 	/* check that we can use the algo */
 	if (have_algo(algo, algolen, sshhostkey) == DROPBEAR_FAILURE) {
 		dropbear_log(LOG_WARNING,
-				"Pubkey auth attempt with unknown algo for '%s' from %s",
-				ses.authstate.pw_name, svr_ses.addrstring);
+				"Pubkey auth attempt with unknown algo '%s' for '%s' from %s",
+				algo, ses.authstate.pw_name, svr_ses.addrstring);
 		goto out;
 	}
 

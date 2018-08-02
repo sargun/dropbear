@@ -239,6 +239,10 @@ algo_type sshhostkey[] = {
 #if DROPBEAR_DSS
 	{"ssh-dss", DROPBEAR_SIGNKEY_DSS, NULL, 1, NULL},
 #endif
+#if 1
+	{"ssh-rsa-cert-v01@openssh.com", DROPBEAR_SIGNKEY_RSA_CERT, NULL, 1, NULL},
+	{"ssh-dss-cert-v01@openssh.com", DROPBEAR_SIGNKEY_DSS_CERT, NULL, 1, NULL},
+#endif
 	{NULL, 0, NULL, 0, NULL}
 };
 
